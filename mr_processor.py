@@ -3,7 +3,7 @@
 import logging
 import base64
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 import gitlab
 from llm_service import analyze_code_security
 
@@ -47,6 +47,8 @@ class MRProcessor:
                     'old_path': change['old_path'],
                     'new_path': change['new_path'],
                     'diff': change['diff'],
+                    'new_file': change.get('new_file', False),
+                    'deleted_file': change.get('deleted_file', False),
                     'new_content': MRProcessor.get_file_content(project, mr.source_branch, change['new_path']) if not change.get('deleted_file') else None
                 }
                 for change in changes['changes']
@@ -89,11 +91,16 @@ class MRProcessor:
                 mr_iid = body["object_attributes"]["iid"]
 
                 gl = self.get_gitlab_client(gitlab_url, gitlab_token)
-                mr = self.get_mr_details(gl, project_id, mr_iid)
-                changed_files = self.get_changed_files(mr)
+                project, mr = self.get_mr_details(gl, project_id, mr_iid)
+                changed_files = self.get_changed_files(project, mr)
 
-                for file in changed_files:
-                    await self.analyze_and_comment(mr, file, add_comments)
+                all_file_contents = self.prepare_file_contents(changed_files)
+                security_analysis = await self.analyze_all_files(all_file_contents)
+
+                self.log_analysis_results(changed_files, security_analysis)
+
+                if add_comments:
+                    self.add_comments_to_mr(mr, security_analysis)
 
                 logger.info("MR %s event processed successfully", mr_action)
             else:
@@ -113,39 +120,53 @@ class MRProcessor:
         return False
 
     @staticmethod
-    async def analyze_and_comment(mr, file, add_comments=False):
-        logger.debug("Analyzing file: %s", file['new_path'] or file['old_path'])
-        try:
-            if file['new_content'] is None:
-                security_analysis = await analyze_code_security(file['diff'])
-            else:
-                security_analysis = await analyze_code_security(file['diff'], file['new_content'])
-
-            if security_analysis is None:
-                logger.error("Security analysis failed for file: %s", file['new_path'] or file['old_path'])
-                return
-
-            comment = MRProcessor.format_security_comment(file, security_analysis)
-            if add_comments:
-                MRProcessor.add_comment_to_mr(mr, comment)
-            else:
-                print(comment)
-        except Exception as e:
-            logger.error("Failed to analyze and comment on file %s: %s", file['new_path'] or file['old_path'], str(e))
-            logger.debug("Full error details:", exc_info=True)
+    def prepare_file_contents(changed_files: List[Dict]) -> str:
+        all_contents = ""
+        for file in changed_files:
+            all_contents += f"File: {file['new_path'] or file['old_path']}\n"
+            all_contents += f"Diff:\n{file['diff']}\n"
+            if not file.get('deleted_file') and file['new_content']:
+                all_contents += f"Full updated content:\n{file['new_content']}\n"
+            all_contents += "---\n"
+        return all_contents
 
     @staticmethod
-    def format_security_comment(file, security_analysis):
-        logger.debug("Formatting security comment for file: %s", file['new_path'] or file['old_path'])
-        comment = f"Security Analysis Results for {file['new_path'] or file['old_path']}:\n\n"
+    async def analyze_all_files(all_file_contents: str) -> Dict:
+        return await analyze_code_security(all_file_contents)
+
+    @staticmethod
+    def log_analysis_results(changed_files: List[Dict], security_analysis: Dict):
+        file_count = len(changed_files)
+        logger.info(f"Analyzed changes in {file_count} files:")
+        for file in changed_files:
+            status = "modified"
+            if file.get('new_file'):
+                status = "added"
+            elif file.get('deleted_file'):
+                status = "deleted"
+            logger.info(f"- {file['new_path'] or file['old_path']} ({status})")
+
         if not security_analysis or 'risks' not in security_analysis:
-            comment += "No security risks identified.\n"
+            logger.info("No security risks identified.")
         else:
+            risk_count = len(security_analysis['risks'])
+            logger.info(f"Found {risk_count} potential security risks:")
+            for risk in security_analysis['risks']:
+                logger.info(f"- {risk.get('description', 'N/A')} (CWE-{risk.get('cwe_id', 'N/A')})")
+
+    @staticmethod
+    def add_comments_to_mr(mr, security_analysis: Dict):
+        if not security_analysis or 'risks' not in security_analysis:
+            comment = "No security risks identified."
+        else:
+            comment = "Security Analysis Results:\n\n"
             for risk in security_analysis['risks']:
                 comment += f"Risk: {risk.get('description', 'N/A')}\n"
                 comment += f"Location: {risk.get('location', 'N/A')}\n"
-                comment += f"Suggestion: {risk.get('suggestion', 'N/A')}\n\n"
-        return comment
+                comment += f"Suggestion: {risk.get('suggestion', 'N/A')}\n"
+                comment += f"CWE: {risk.get('cwe_id', 'N/A')}\n\n"
+        
+        MRProcessor.add_comment_to_mr(mr, comment)
 
     @staticmethod
     async def analyze_mr_cli(gitlab_url, token, project_id, mr_iid):
@@ -155,8 +176,22 @@ class MRProcessor:
             project, mr = MRProcessor.get_mr_details(gl, project_id, mr_iid)
             changed_files = MRProcessor.get_changed_files(project, mr)
 
-            for file in changed_files:
-                await MRProcessor.analyze_and_comment(mr, file, add_comments=False)
+            all_file_contents = MRProcessor.prepare_file_contents(changed_files)
+            security_analysis = await MRProcessor.analyze_all_files(all_file_contents)
+
+            MRProcessor.log_analysis_results(changed_files, security_analysis)
+            
+            print("Security Analysis Results:")
+            if not security_analysis or 'risks' not in security_analysis:
+                print("No security risks identified.")
+            else:
+                for risk in security_analysis['risks']:
+                    print(f"Risk: {risk.get('description', 'N/A')}")
+                    print(f"Location: {risk.get('location', 'N/A')}")
+                    print(f"Suggestion: {risk.get('suggestion', 'N/A')}")
+                    print(f"CWE: {risk.get('cwe_id', 'N/A')}")
+                    print()
+
         except gitlab.exceptions.GitlabAuthenticationError:
             logger.error("Authentication failed. Please check your GitLab token.")
             raise

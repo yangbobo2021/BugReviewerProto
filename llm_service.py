@@ -63,7 +63,7 @@ def parse_json(response):
         logger.error(f"Exception in parse_json: {str(e)}")
         return None
 
-async def analyze_code_security(diff, full_code=None):
+async def analyze_code_security(all_file_contents: str):
     """
     Analyze code security by sending a diff and optionally full code to the LLM.
 
@@ -74,21 +74,19 @@ async def analyze_code_security(diff, full_code=None):
     Returns:
         dict: Parsed JSON response containing security analysis results.
     """
-    cwe_list = ", ".join(CWE_TOP_25)
-    prompt = f"""Analyze the following code diff for potential security risks, focusing only on the changes introduced:
+    prompt = f"""Analyze the following code changes for potential security risks, focusing on the changes introduced:
 
-Diff:
-{diff}
+{all_file_contents}
 
-CWE Top 25 list to check against: {cwe_list}
+CWE Top 25 list to check against: {', '.join(CWE_TOP_25)}
 
 Instructions:
-1. Examine the diff carefully, paying attention to added or modified lines of code.
+1. Examine the diffs and full file contents carefully, paying attention to added or modified code.
 2. Identify potential security risks introduced by these changes, considering only the CWE Top 25 Most Dangerous Software Weaknesses list provided above.
 3. Do not report issues that exist in the old code and were not affected by the changes.
 4. For each identified risk, provide:
    a. A brief description of the risk
-   b. The specific line or section of code in the diff where the risk is introduced
+   b. The specific file and line or section of code where the risk is introduced
    c. A suggested fix or mitigation strategy
    d. The relevant CWE identifier from the provided list (e.g., CWE-79)
 
@@ -98,7 +96,7 @@ Format your response as a JSON object wrapped in a markdown code block, like thi
     "risks": [
         {{
             "description": "Risk description",
-            "location": "Line number or code section in the diff",
+            "location": "File name and line number or code section",
             "suggestion": "Suggested fix or mitigation",
             "cwe_id": "CWE-XXX"
         }},
@@ -108,9 +106,6 @@ Format your response as a JSON object wrapped in a markdown code block, like thi
 ```
 
 If no new security risks from the CWE Top 25 list are introduced by the changes, return an empty list for "risks". """
-
-    if full_code:
-        prompt += f"\nFull updated file for context (do not analyze this for additional risks, focus only on the diff):\n{full_code}\n"
 
     messages = [{"role": "user", "content": prompt}]
     response = await call_llm(messages)
