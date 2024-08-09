@@ -49,7 +49,7 @@ class MRProcessor:
                     'diff': change['diff'],
                     'new_file': change.get('new_file', False),
                     'deleted_file': change.get('deleted_file', False),
-                    'new_content': MRProcessor.get_file_content(project, mr.source_branch, change['new_path']) if not change.get('deleted_file') else None
+                    'new_content': MRProcessor.get_file_content(project, mr, change['new_path']) if not change.get('deleted_file') else None
                 }
                 for change in changes['changes']
             ]
@@ -59,16 +59,36 @@ class MRProcessor:
             return []
 
     @staticmethod
-    def get_file_content(project, branch, file_path):
-        logger.debug("Fetching content for file: %s", file_path)
+    def get_file_content(project, mr, file_path):
+        logger.debug(f"Fetching content for file: {file_path} from MR: {mr.iid}")
         try:
-            file_content = project.files.get(file_path=file_path, ref=branch)
+            # 获取 MR 的最新提交 SHA
+            commits = list(mr.commits())
+            if not commits:
+                logger.error(f"No commits found for MR: {mr.iid}")
+                return None
+            latest_commit_sha = commits[-1].id
+
+            # 从最新提交中获取文件内容
+            file_content = project.files.get(file_path=file_path, ref=latest_commit_sha)
+            if file_content is None:
+                logger.error(f"File not found in commit {latest_commit_sha}: {file_path}")
+                return None
+
             content = base64.b64decode(file_content.content).decode('utf-8')
-            logger.debug("Successfully retrieved content for file: %s (length: %d characters)", file_path, len(content))
+            logger.debug(f"Successfully retrieved content for file: {file_path} (length: {len(content)} characters)")
             return content
-        except (gitlab.exceptions.GitlabError, UnicodeDecodeError) as e:
-            logger.error("Error retrieving file content for %s: %s", file_path, str(e))
-            return None
+        except gitlab.exceptions.GitlabGetError as e:
+            if e.response_code == 404:
+                logger.error(f"File not found: {file_path} in commit {latest_commit_sha}")
+            else:
+                logger.error(f"GitLab API error when retrieving file {file_path}: {str(e)}")
+        except UnicodeDecodeError as e:
+            logger.error(f"Error decoding content for file {file_path}: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error retrieving file content for {file_path}: {str(e)}")
+            logger.debug("Full error details:", exc_info=True)
+        return None
 
     @staticmethod
     def add_comment_to_mr(mr, comment):
@@ -132,6 +152,13 @@ class MRProcessor:
 
     @staticmethod
     async def analyze_all_files(all_file_contents: str) -> Dict:
+        # 估算 TOKEN 数量（这里使用一个简单的估算方法，实际上可能需要更精确的计算）
+        estimated_tokens = len(all_file_contents.split())
+        
+        if estimated_tokens > 64000:  # 使用 64000 作为阈值，留有一些余量
+            logger.warning(f"Content exceeds 64K tokens (estimated {estimated_tokens} tokens). Skipping LLM analysis.")
+            return {"risks": []}  # 返回空的风险列表
+        
         return await analyze_code_security(all_file_contents)
 
     @staticmethod
@@ -152,7 +179,7 @@ class MRProcessor:
             risk_count = len(security_analysis['risks'])
             logger.info(f"Found {risk_count} potential security risks:")
             for risk in security_analysis['risks']:
-                logger.info(f"- {risk.get('description', 'N/A')} (CWE-{risk.get('cwe_id', 'N/A')})")
+                logger.info(f"- {risk.get('description', 'N/A')} ({risk.get('standard_id', 'N/A')})")
 
     @staticmethod
     def add_comments_to_mr(mr, security_analysis: Dict):
@@ -164,7 +191,7 @@ class MRProcessor:
                 comment += f"Risk: {risk.get('description', 'N/A')}\n"
                 comment += f"Location: {risk.get('location', 'N/A')}\n"
                 comment += f"Suggestion: {risk.get('suggestion', 'N/A')}\n"
-                comment += f"CWE: {risk.get('cwe_id', 'N/A')}\n\n"
+                comment += f"Standard ID: {risk.get('standard_id', 'N/A')}\n\n"
         
         MRProcessor.add_comment_to_mr(mr, comment)
 
@@ -189,8 +216,9 @@ class MRProcessor:
                     print(f"Risk: {risk.get('description', 'N/A')}")
                     print(f"Location: {risk.get('location', 'N/A')}")
                     print(f"Suggestion: {risk.get('suggestion', 'N/A')}")
-                    print(f"CWE: {risk.get('cwe_id', 'N/A')}")
+                    print(f"Standard ID: {risk.get('standard_id', 'N/A')}")
                     print()
+            return security_analysis
 
         except gitlab.exceptions.GitlabAuthenticationError:
             logger.error("Authentication failed. Please check your GitLab token.")

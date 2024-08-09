@@ -74,21 +74,33 @@ async def analyze_code_security(all_file_contents: str):
     Returns:
         dict: Parsed JSON response containing security analysis results.
     """
-    prompt = f"""Analyze the following code changes for potential security risks, focusing on the changes introduced:
+    
+    prompt = f"""Analyze the following code changes for potential security and business risks, focusing ONLY on the changes introduced in this specific merge request:
 
 {all_file_contents}
 
-CWE Top 25 list to check against: {', '.join(CWE_TOP_25)}
-
 Instructions:
-1. Examine the diffs and full file contents carefully, paying attention to added or modified code.
-2. Identify potential security risks introduced by these changes, considering only the CWE Top 25 Most Dangerous Software Weaknesses list provided above.
-3. Do not report issues that exist in the old code and were not affected by the changes.
-4. For each identified risk, provide:
+1. Examine the diffs carefully, paying attention ONLY to added or modified code.
+2. Identify potential security risks introduced by these specific changes, considering:
+   - CWE Top 25 Most Dangerous Software Weaknesses
+   - OWASP Top 10 Web Application Security Risks
+   - Specific business logic vulnerabilities
+   - Data handling and privacy concerns
+   - API usage and third-party integrations
+   - Input validation and output encoding
+   - Error handling and logging practices
+   - Concurrency and resource management issues
+   - Code quality and maintainability concerns
+3. For each identified risk, provide:
    a. A brief description of the risk
    b. The specific file and line or section of code where the risk is introduced
    c. A suggested fix or mitigation strategy
-   d. The relevant CWE identifier from the provided list (e.g., CWE-79)
+   d. The relevant security standard identifier (e.g., CWE-79, OWASP A03:2021)
+
+Important:
+- Focus ONLY on new risks introduced by the changes in this merge request.
+- Do NOT report on existing issues in unchanged code.
+- If a function has been modified, only consider the new or changed parts of that function.
 
 Format your response as a JSON object wrapped in a markdown code block, like this:
 ```json
@@ -98,14 +110,13 @@ Format your response as a JSON object wrapped in a markdown code block, like thi
             "description": "Risk description",
             "location": "File name and line number or code section",
             "suggestion": "Suggested fix or mitigation",
-            "cwe_id": "CWE-XXX"
+            "standard_id": "CWE-XXX or OWASP AXX:2021"
         }},
         ...
     ]
 }}
 ```
-
-If no new security risks from the CWE Top 25 list are introduced by the changes, return an empty list for "risks". """
+If no new security or business risks are introduced by the changes in this merge request, return an empty list for "risks". """
 
     messages = [{"role": "user", "content": prompt}]
     response = await call_llm(messages)
