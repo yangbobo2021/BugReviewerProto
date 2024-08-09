@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "bugreviewerproto"
+version = "0.1.0"
+description = ""
+authors = ["bobo <bobo.yang@merico.dev>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.112.0"
+uvicorn = "^0.30.5"
+pyyaml = "^6.0.2"
+python-gitlab = "^4.9.0"
+openai = "^1.40.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
