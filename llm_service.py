@@ -40,9 +40,9 @@ def parse_json(response):
         # 首先尝试查找 ```json 格式
         json_start = response.find("```json")
         if json_start != -1:
-            json_end = response.find("```", json_start + 7)
+            json_end = response.find("}\n```", json_start + 7)
             if json_end != -1:
-                json_str = response[json_start + 7:json_end].strip()
+                json_str = response[json_start + 7:json_end+1].strip()
             else:
                 json_str = response[json_start + 7:].strip()
         else:
@@ -75,48 +75,55 @@ async def analyze_code_security(all_file_contents: str):
         dict: Parsed JSON response containing security analysis results.
     """
     
-    prompt = f"""Analyze the following code changes for potential security and business risks, focusing ONLY on the changes introduced in this specific merge request:
+    prompt = f"""Analyze the following code changes and identify up to 2 of the most significant and well-evidenced risks directly introduced or exacerbated by the modifications in this specific merge request:
 
 {all_file_contents}
 
 Instructions:
-1. Examine the diffs carefully, paying attention ONLY to added or modified code.
-2. Identify potential security risks introduced by these specific changes, considering:
-   - CWE Top 25 Most Dangerous Software Weaknesses
-   - OWASP Top 10 Web Application Security Risks
-   - Specific business logic vulnerabilities
-   - Data handling and privacy concerns
-   - API usage and third-party integrations
-   - Input validation and output encoding
-   - Error handling and logging practices
-   - Concurrency and resource management issues
-   - Code quality and maintainability concerns
-3. For each identified risk, provide:
-   a. A brief description of the risk
-   b. The specific file and line or section of code where the risk is introduced
-   c. A suggested fix or mitigation strategy
-   d. The relevant security standard identifier (e.g., CWE-79, OWASP A03:2021)
+1. Examine only the added, modified, or deleted code in the diffs.
+2. Identify risks that are a direct result of these changes, such as:
+   - Security vulnerabilities introduced by the new or modified code
+   - Potential bugs or logical errors caused by the changes
+   - Unintended side effects on existing functionality
+   - New edge cases or error scenarios created by the modifications
+   - Performance risks directly tied to the changes
+   - Breaks in backward compatibility or API contracts due to the changes
+3. For each identified risk (maximum 2), provide:
+   a. A concise description of the risk, clearly linking it to the specific change
+   b. The exact file and relevant code section where the risk is introduced, without using line numbers. Quote the specific code that introduces the risk.
+   c. A detailed explanation of how this change creates or increases the risk, including:
+      - Strong evidence from the code, with specific code snippets quoted
+      - An explanation of the potential consequences of this risk
+      - How the risk relates to common security vulnerabilities or best practices
+      - Any relevant context from the rest of the codebase that contributes to this risk
+   d. A suggested fix or mitigation strategy
+   e. The most relevant security standard or rule that this risk violates or relates to. This can be from any recognized security standard (e.g., CWE, OWASP, CERT, SANS, ISO, NIST), industry best practice, or a custom rule if no standard applies. Provide a brief explanation of why this standard or rule is relevant.
 
-Important:
-- Focus ONLY on new risks introduced by the changes in this merge request.
-- Do NOT report on existing issues in unchanged code.
-- If a function has been modified, only consider the new or changed parts of that function.
+Critical Guidelines:
+- Only report risks that did not exist before this merge request.
+- Do NOT include pre-existing risks in unchanged parts of the code.
+- If a change modifies existing risky code, only report if it significantly increases the risk or introduces new risks.
+- Focus on the direct impact of the changes, not on hypothetical or unrelated risks.
+- Prioritize risks with the strongest evidence and highest impact.
+- Include no more than 2 risks, even if more are found. It's acceptable to report 0 or 1 risk if that's all that can be confidently identified.
 
-Format your response as a JSON object wrapped in a markdown code block, like this:
+Format your response as a JSON object wrapped in a markdown code block:
 ```json
 {{
     "risks": [
         {{
-            "description": "Risk description",
-            "location": "File name and line number or code section",
+            "description": "Concise risk description",
+            "location": "File name and relevant code section (quoted)",
+            "evidence": "Detailed explanation with strong evidence from the code, including quoted snippets, potential consequences, relation to security best practices, and relevant context",
             "suggestion": "Suggested fix or mitigation",
-            "standard_id": "CWE-XXX or OWASP AXX:2021"
+            "standard_id": "Relevant security standard or rule ID",
+            "standard_explanation": "Brief explanation of why this standard or rule is relevant"
         }},
         ...
     ]
 }}
 ```
-If no new security or business risks are introduced by the changes in this merge request, return an empty list for "risks". """
+If no significant risks are identified or if there isn't strong evidence for any risks, return an empty list for "risks"."""
 
     messages = [{"role": "user", "content": prompt}]
     response = await call_llm(messages)

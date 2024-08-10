@@ -51,7 +51,7 @@ class MRProcessor:
                     'deleted_file': change.get('deleted_file', False),
                     'new_content': MRProcessor.get_file_content(project, mr, change['new_path']) if not change.get('deleted_file') else None
                 }
-                for change in changes['changes']
+                for change in changes['changes'][:10+1]
             ]
         except Exception as e:
             logger.error("Failed to get changed files: %s", str(e))
@@ -114,8 +114,11 @@ class MRProcessor:
                 project, mr = self.get_mr_details(gl, project_id, mr_iid)
                 changed_files = self.get_changed_files(project, mr)
 
-                all_file_contents = self.prepare_file_contents(changed_files)
-                security_analysis = await self.analyze_all_files(all_file_contents)
+                if len(changed_files) <= 10:
+                    all_file_contents = self.prepare_file_contents(changed_files)
+                else:
+                    all_file_contents = ""
+                security_analysis = await self.analyze_all_files(changed_files, all_file_contents)
 
                 self.log_analysis_results(changed_files, security_analysis)
 
@@ -151,7 +154,11 @@ class MRProcessor:
         return all_contents
 
     @staticmethod
-    async def analyze_all_files(all_file_contents: str) -> Dict:
+    async def analyze_all_files(changed_files: List[Dict], all_file_contents: str) -> Dict:
+        if len(changed_files) > 10:
+            logger.warning(f"MR involves more than 10 files ({len(changed_files)} files). Skipping analysis.")
+            return {"risks": []}
+
         # 估算 TOKEN 数量（这里使用一个简单的估算方法，实际上可能需要更精确的计算）
         estimated_tokens = len(all_file_contents.split())
         
@@ -203,21 +210,24 @@ class MRProcessor:
             project, mr = MRProcessor.get_mr_details(gl, project_id, mr_iid)
             changed_files = MRProcessor.get_changed_files(project, mr)
 
-            all_file_contents = MRProcessor.prepare_file_contents(changed_files)
-            security_analysis = await MRProcessor.analyze_all_files(all_file_contents)
+            if len(changed_files) <= 10:
+                all_file_contents = MRProcessor.prepare_file_contents(changed_files)
+            else:
+                all_file_contents = ""
+            security_analysis = await MRProcessor.analyze_all_files(changed_files, all_file_contents)
 
             MRProcessor.log_analysis_results(changed_files, security_analysis)
             
-            print("Security Analysis Results:")
+            logger.info("Security Analysis Results:")
             if not security_analysis or 'risks' not in security_analysis:
-                print("No security risks identified.")
+                logger.info("No security risks identified.")
             else:
                 for risk in security_analysis['risks']:
-                    print(f"Risk: {risk.get('description', 'N/A')}")
-                    print(f"Location: {risk.get('location', 'N/A')}")
-                    print(f"Suggestion: {risk.get('suggestion', 'N/A')}")
-                    print(f"Standard ID: {risk.get('standard_id', 'N/A')}")
-                    print()
+                    logger.info(f"Risk: {risk.get('description', 'N/A')}")
+                    logger.info(f"Location: {risk.get('location', 'N/A')}")
+                    logger.info(f"evidence: {risk.get('evidence', 'N/A')}")
+                    logger.info(f"Suggestion: {risk.get('suggestion', 'N/A')}")
+                    logger.info(f"Standard ID: {risk.get('standard_id', 'N/A')}")
             return security_analysis
 
         except gitlab.exceptions.GitlabAuthenticationError:
