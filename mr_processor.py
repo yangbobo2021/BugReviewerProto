@@ -299,19 +299,23 @@ class MRProcessor:
     def add_comments_to_mr(item, security_analysis: Dict, platform: str):
         if not security_analysis or 'risks' not in security_analysis:
             comment = "No security risks identified."
+            if platform == "gitlab":
+                MRProcessor.add_comment_to_mr(item, comment)
+            elif platform == "github":
+                MRProcessor.add_comment_to_pr(item, comment)
         else:
-            comment = "Security Analysis Results:\n\n"
             for risk in security_analysis['risks']:
-                comment += f"## Risk {index}: {risk.get('description', 'N/A')}\n\n"
+                comment = f"# Security Risk: {risk.get('description', 'N/A')}\n\n"
                 comment += f"**Location:** {risk.get('location', 'N/A')}\n\n"
                 comment += f"**Evidence:**\n{risk.get('evidence', 'N/A')}\n\n"
                 comment += f"**Suggestion:**\n{risk.get('suggestion', 'N/A')}\n\n"
-                comment += f"**Standard ID:** {risk.get('standard_id', 'N/A')}\n\n"
-    
-        if platform == "gitlab":
-            MRProcessor.add_comment_to_mr(item, comment)
-        elif platform == "github":
-            MRProcessor.add_comment_to_pr(item, comment)
+                comment += f"**Standard ID:** {risk.get('standard_id', 'N/A')}\n"
+
+                if platform == "gitlab":
+                    MRProcessor.add_comment_to_mr(item, comment)
+                elif platform == "github":
+                    MRProcessor.add_comment_to_pr(item, comment)
+
 
     @staticmethod
     async def analyze_mr_cli(base_url, token, project_id, mr_iid, platform):
