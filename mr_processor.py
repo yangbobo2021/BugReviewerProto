@@ -304,9 +304,10 @@ class MRProcessor:
             for risk in security_analysis['risks']:
                 comment += f"Risk: {risk.get('description', 'N/A')}\n"
                 comment += f"Location: {risk.get('location', 'N/A')}\n"
+                comment += f"Evidence: {risk.get('evidence', 'N/A')}\n"  # 添加 Evidence 信息
                 comment += f"Suggestion: {risk.get('suggestion', 'N/A')}\n"
                 comment += f"Standard ID: {risk.get('standard_id', 'N/A')}\n\n"
-        
+    
         if platform == "gitlab":
             MRProcessor.add_comment_to_mr(item, comment)
         elif platform == "github":
