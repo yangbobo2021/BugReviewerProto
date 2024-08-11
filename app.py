@@ -29,13 +29,6 @@ def load_config(config_file: str):
 config = load_config("config.yaml")
 mr_processor = MRProcessor(config)
 
-# 创建一个全局的 CommentManager 实例
-comment_manager = CommentManager(
-    platform=config['platform'],
-    api_url=config['api_url'],
-    token=config['token']
-)
-
 @app.post("/gitlab-webhook")
 async def gitlab_webhook(request: Request, background_tasks: BackgroundTasks):
     """
@@ -55,7 +48,7 @@ async def gitlab_webhook(request: Request, background_tasks: BackgroundTasks):
     
     if event_type == 'Note Hook':
         # 这是一个评论事件
-        await handle_comment_event(body, "gitlab")
+        await handle_comment_event(body, headers, "gitlab")
         return JSONResponse(content={"message": "GitLab comment webhook received and processed"}, status_code=200)
     elif event_type == 'Merge Request Hook':
         # 这是一个合并请求事件
@@ -83,7 +76,7 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     
     if event_type == 'issue_comment' or event_type == 'pull_request_review_comment':
         # 这是一个评论事件
-        await handle_comment_event(body, "github")
+        await handle_comment_event(body, headers, "github")
         return JSONResponse(content={"message": "GitHub comment webhook received and processed"}, status_code=200)
     elif event_type == 'pull_request':
         # 这是一个拉取请求事件
@@ -92,22 +85,30 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     else:
         return JSONResponse(content={"message": "Unsupported GitHub event type"}, status_code=400)
 
-async def handle_comment_event(body, platform):
+async def handle_comment_event(body, headers, platform):
     """
     Handle comment events for both GitLab and GitHub.
 
     Args:
         body (dict): The webhook payload.
+        headers (dict): The request headers.
         platform (str): Either "gitlab" or "github".
     """
     if platform == "gitlab":
+        api_url = body['project']['web_url'].rsplit('/', 2)[0]
+        token = headers.get('X-Gitlab-Token')
         comment_id = body['object_attributes']['id']
         parent_id = body['object_attributes']['noteable_id']
         content = body['object_attributes']['note']
     else:  # github
+        api_url = f"https://api.github.com"
+        token = headers.get('X-Hub-Signature')
         comment_id = body['comment']['id']
         parent_id = body['issue']['number'] if 'issue' in body else body['pull_request']['number']
         content = body['comment']['body']
+
+    # 为每个请求创建一个新的 CommentManager 实例
+    comment_manager = CommentManager(platform=platform, api_url=api_url, token=token)
 
     # 检查是否是回复评论
     if comment_manager.get_parent_comment(str(comment_id)):
