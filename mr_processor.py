@@ -185,7 +185,7 @@ class MRProcessor:
         mr_action = body.get("object_attributes", {}).get("action")
         
         if self.need_security_analysis(mr_action, body, "gitlab"):
-            gitlab_url = body["project"]["web_url"].rsplit('/', 1)[0]
+            gitlab_url = body["project"]["web_url"].rsplit('/', 2)[0]
             gitlab_token = headers["x-gitlab-token"]
             project_id = body["project"]["id"]
             mr_iid = body["object_attributes"]["iid"]
