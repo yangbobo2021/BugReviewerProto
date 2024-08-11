@@ -307,8 +307,8 @@ class MRProcessor:
             for risk in security_analysis['risks']:
                 comment = f"# Security Risk: {risk.get('description', 'N/A')}\n\n"
                 comment += f"**Location:** {risk.get('location', 'N/A')}\n\n"
-                comment += f"**Evidence:**\n{risk.get('evidence', 'N/A')}\n\n"
-                comment += f"**Suggestion:**\n{risk.get('suggestion', 'N/A')}\n\n"
+                comment += f"**Evidence:**\n```\n{risk.get('evidence', 'N/A')}\n```\n\n"
+                comment += f"**Suggestion:**\n```\n{risk.get('suggestion', 'N/A')}\n```\n\n"
                 comment += f"**Standard ID:** {risk.get('standard_id', 'N/A')}\n"
 
                 if platform == "gitlab":
