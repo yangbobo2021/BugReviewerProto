@@ -75,55 +75,55 @@ async def analyze_code_security(all_file_contents: str):
         dict: Parsed JSON response containing security analysis results.
     """
     
-    prompt = f"""Analyze the following code changes and identify up to 2 of the most significant and well-evidenced risks directly introduced or exacerbated by the modifications in this specific merge request:
+    prompt = f"""分析以下代码变更,并识别出由这个特定合并请求直接引入或加剧的最多2个最显著且有充分证据的风险:
 
 {all_file_contents}
 
-Instructions:
-1. Examine only the added, modified, or deleted code in the diffs.
-2. Identify risks that are a direct result of these changes, such as:
-   - Security vulnerabilities introduced by the new or modified code
-   - Potential bugs or logical errors caused by the changes
-   - Unintended side effects on existing functionality
-   - New edge cases or error scenarios created by the modifications
-   - Performance risks directly tied to the changes
-   - Breaks in backward compatibility or API contracts due to the changes
-3. For each identified risk (maximum 2), provide:
-   a. A concise description of the risk, clearly linking it to the specific change
-   b. The exact file and relevant code section where the risk is introduced, without using line numbers. Quote the specific code that introduces the risk.
-   c. A detailed explanation of how this change creates or increases the risk, including:
-      - Strong evidence from the code, with specific code snippets quoted
-      - An explanation of the potential consequences of this risk
-      - How the risk relates to common security vulnerabilities or best practices
-      - Any relevant context from the rest of the codebase that contributes to this risk
-   d. A suggested fix or mitigation strategy
-   e. The most relevant security standard or rule that this risk violates or relates to. This can be from any recognized security standard (e.g., CWE, OWASP, CERT, SANS, ISO, NIST), industry best practice, or a custom rule if no standard applies. Provide a brief explanation of why this standard or rule is relevant.
+指示:
+1. 仅检查差异中添加、修改或删除的代码。
+2. 识别直接由这些变更导致的风险,例如:
+   - 新的或修改的代码引入的安全漏洞
+   - 变更导致的潜在错误或逻辑错误
+   - 对现有功能的意外副作用
+   - 修改创建的新边缘情况或错误场景
+   - 与变更直接相关的性能风险
+   - 由于变更导致的向后兼容性或API契约的破坏
+3. 对于每个识别的风险(最多2个),请提供:
+   a. 风险的简洁描述,明确链接到具体的变更
+   b. 引入风险的确切文件和相关代码部分,不要使用行号。引用引入风险的具体代码。
+   c. 详细解释这个变更如何创建或增加风险,包括:
+      - 来自代码的强有力证据,包括引用的具体代码片段
+      - 对这个风险潜在后果的解释
+      - 这个风险如何与常见的安全漏洞或最佳实践相关
+      - 来自代码库其余部分的任何相关上下文,这些上下文会导致这个风险
+   d. 建议的修复或缓解策略
+   e. 这个风险违反或涉及的最相关的安全标准或规则。这可以来自任何公认的安全标准(例如CWE, OWASP, CERT, SANS, ISO, NIST),行业最佳实践,或者如果没有适用的标准,可以是自定义规则。简要解释为什么这个标准或规则是相关的。
 
-Critical Guidelines:
-- Only report risks that did not exist before this merge request.
-- Do NOT include pre-existing risks in unchanged parts of the code.
-- If a change modifies existing risky code, only report if it significantly increases the risk or introduces new risks.
-- Focus on the direct impact of the changes, not on hypothetical or unrelated risks.
-- Prioritize risks with the strongest evidence and highest impact.
-- Include no more than 2 risks, even if more are found. It's acceptable to report 0 or 1 risk if that's all that can be confidently identified.
+关键指南:
+- 只报告在这个合并请求之前不存在的风险。
+- 不要包括未更改部分代码中的预先存在的风险。
+- 如果变更修改了现有的有风险代码,只有在显著增加风险或引入新风险时才报告。
+- 专注于变更的直接影响,而不是假设的或不相关的风险。
+- 优先考虑有最强有力证据和最高影响的风险。
+- 即使发现更多,也最多包括2个风险。如果只能确定地识别出0个或1个风险,那也是可以接受的。
 
-Format your response as a JSON object wrapped in a markdown code block:
+请将你的回答格式化为一个JSON对象,并用markdown代码块包装:
 ```json
 {{
     "risks": [
         {{
-            "description": "Concise risk description",
-            "location": "File name and relevant code section (quoted)",
-            "evidence": "Detailed explanation with strong evidence from the code, including quoted snippets, potential consequences, relation to security best practices, and relevant context",
-            "suggestion": "Suggested fix or mitigation",
-            "standard_id": "Relevant security standard or rule ID",
-            "standard_explanation": "Brief explanation of why this standard or rule is relevant"
+            "description": "简洁的风险描述",
+            "location": "文件名和相关代码部分(引用)",
+            "evidence": "详细解释,包括来自代码的强有力证据,包括引用的代码片段,潜在后果,与安全最佳实践的关系,以及相关上下文",
+            "suggestion": "建议的修复或缓解措施",
+            "standard_id": "相关的安全标准或规则ID",
+            "standard_explanation": "简要解释为什么这个标准或规则是相关的"
         }},
         ...
     ]
 }}
 ```
-If no significant risks are identified or if there isn't strong evidence for any risks, return an empty list for "risks"."""
+如果没有识别出显著风险或者没有任何风险的强有力证据,请为"risks"返回一个空列表。"""
 
     messages = [{"role": "user", "content": prompt}]
     response = await call_llm(messages)
