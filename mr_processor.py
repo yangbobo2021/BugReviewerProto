@@ -302,11 +302,11 @@ class MRProcessor:
         else:
             comment = "Security Analysis Results:\n\n"
             for risk in security_analysis['risks']:
-                comment += f"Risk: {risk.get('description', 'N/A')}\n"
-                comment += f"Location: {risk.get('location', 'N/A')}\n"
-                comment += f"Evidence: {risk.get('evidence', 'N/A')}\n"  # 添加 Evidence 信息
-                comment += f"Suggestion: {risk.get('suggestion', 'N/A')}\n"
-                comment += f"Standard ID: {risk.get('standard_id', 'N/A')}\n\n"
+                comment += f"## Risk {index}: {risk.get('description', 'N/A')}\n\n"
+                comment += f"**Location:** {risk.get('location', 'N/A')}\n\n"
+                comment += f"**Evidence:**\n{risk.get('evidence', 'N/A')}\n\n"
+                comment += f"**Suggestion:**\n{risk.get('suggestion', 'N/A')}\n\n"
+                comment += f"**Standard ID:** {risk.get('standard_id', 'N/A')}\n\n"
     
         if platform == "gitlab":
             MRProcessor.add_comment_to_mr(item, comment)
