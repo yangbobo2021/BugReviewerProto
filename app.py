@@ -66,7 +66,7 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     
     return JSONResponse(content={"message": "GitHub webhook received, processing started"}, status_code=200)
 
-@app.get("/health")
+@app.get("/ping")
 async def health_check():
     """
     Simple health check endpoint.
