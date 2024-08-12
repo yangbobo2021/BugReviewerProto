@@ -118,7 +118,7 @@ class MRProcessor:
             if not commits:
                 logger.error(f"No commits found for MR: {mr.iid}")
                 return None
-            latest_commit_sha = commits[-1].id
+            latest_commit_sha = commits[0].id
 
             file_content = project.files.get(file_path=file_path, ref=latest_commit_sha)
             if file_content is None:
@@ -163,10 +163,9 @@ class MRProcessor:
 
     async def add_comment_to_mr(self, mr, comment):
         try:
-            # 使用 GitLab API 添加评论
-            note = mr.notes.create({'body': comment})
-            logger.info(f"Comment added to GitLab MR. MR IID: {mr.iid}")
-            return note
+            discussion = mr.discussions.create({'body': comment})
+            logger.info(f"Discussion created in GitLab MR. MR IID: {mr.iid}")
+            return discussion
         except Exception as e:
             logger.error(f"Error adding comment to GitLab MR: {str(e)}")
             raise  # 重新抛出异常，而不是返回 None
@@ -393,12 +392,8 @@ class MRProcessor:
     async def add_comment(self, item, comment, platform):
         try:
             if platform == "gitlab":
-                response = await self.add_comment_to_mr(item, comment)
-                # GitLab API 可能不直接返回 discussion_id，我们需要从其他属性中获取
-                discussion_id = getattr(response, 'discussion_id', None)
-                if discussion_id is None and hasattr(response, 'attributes'):
-                    discussion_id = response.attributes.get('discussion_id')
-                return response.id, discussion_id
+                discussion = await self.add_comment_to_mr(item, comment)
+                return discussion.attributes['notes'][0]['id'], discussion.id
             elif platform == "github":
                 response = await self.add_comment_to_pr(item, comment)
                 return response.id, None  # GitHub doesn't have a direct equivalent to discussion_id

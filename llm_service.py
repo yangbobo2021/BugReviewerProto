@@ -136,7 +136,7 @@ async def check_fixed_risks(all_file_contents: str, previous_risks: List[Dict]):
 {json.dumps(risk, indent=2)}
 
 指示:
-1. 仅检查差异中添加、修改或删除的代码。
+1. 根据修改后最终代码进行评估。
 2. 评估这个特定的风险是否已被修复。
 3. 如果风险已被修复，请提供详细解释。
 
