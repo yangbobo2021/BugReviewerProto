@@ -391,13 +391,22 @@ class MRProcessor:
         return comment
 
     async def add_comment(self, item, comment, platform):
-        if platform == "gitlab":
-            response = await self.add_comment_to_mr(item, comment)
-            return response.id, response.discussion_id
-        elif platform == "github":
-            response = await self.add_comment_to_pr(item, comment)
-            return response.id, None  # GitHub doesn't have a direct equivalent to discussion_id
-
+        try:
+            if platform == "gitlab":
+                response = await self.add_comment_to_mr(item, comment)
+                # GitLab API 可能不直接返回 discussion_id，我们需要从其他属性中获取
+                discussion_id = getattr(response, 'discussion_id', None)
+                if discussion_id is None and hasattr(response, 'attributes'):
+                    discussion_id = response.attributes.get('discussion_id')
+                return response.id, discussion_id
+            elif platform == "github":
+                response = await self.add_comment_to_pr(item, comment)
+                return response.id, None  # GitHub doesn't have a direct equivalent to discussion_id
+            else:
+                raise ValueError(f"Unsupported platform: {platform}")
+        except Exception as e:
+            logger.error(f"Error adding comment on {platform}: {str(e)}")
+            raise  # 重新抛出异常
 
 
     @staticmethod
