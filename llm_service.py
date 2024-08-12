@@ -4,7 +4,7 @@ import os
 import json
 import logging
 import openai
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -64,17 +64,10 @@ def parse_json(response):
         logger.error(f"Exception in parse_json: {str(e)}")
         return None
 
-async def analyze_code_security(all_file_contents: str):
+async def identify_new_risks(all_file_contents: str):
     """
-    Analyze code security by sending a diff and optionally full code to the LLM.
-
-    Args:
-        all_file_contents (str): The code diff and full updated file content to analyze.
-
-    Returns:
-        dict: Parsed JSON response containing security analysis results.
+    分析代码变更，识别新的风险问题。
     """
-    
     prompt = f"""分析以下代码变更,并识别出由这个特定合并请求直接引入或加剧的最多2个最显著且有充分证据的风险:
 
 {all_file_contents}
@@ -128,9 +121,84 @@ async def analyze_code_security(all_file_contents: str):
     messages = [{"role": "user", "content": prompt}]
     response = await call_llm(messages)
     parsed_response = parse_json(response)
-    if parsed_response is None:
-        return {"risks": []}  # 返回一个空的风险列表而不是 None
-    return parsed_response
+    return parsed_response.get('risks', []) if parsed_response else []
+
+async def check_fixed_risks(all_file_contents: str, previous_risks: List[Dict]):
+    fixed_risks = []
+    for risk in previous_risks:
+        if risk['status'] == 'open':  # 只检查未修复的风险
+            prompt = f"""分析以下代码变更，并评估以下特定风险是否已被修复：
+
+代码变更：
+{all_file_contents}
+
+需要评估的风险：
+{json.dumps(risk, indent=2)}
+
+指示:
+1. 仅检查差异中添加、修改或删除的代码。
+2. 评估这个特定的风险是否已被修复。
+3. 如果风险已被修复，请提供详细解释。
+
+请将你的回答格式化为一个JSON对象,并用markdown代码块包装:
+```json
+{{
+    "is_fixed": true/false,
+    "evidence": "解释为什么这个风险被认为已修复或仍然存在"
+}}
+```
+"""
+
+            messages = [{"role": "user", "content": prompt}]
+            response = await call_llm(messages)
+            parsed_response = parse_json(response)
+            
+            if parsed_response and parsed_response.get('is_fixed'):
+                risk['status'] = 'fixed'
+                risk['fix_evidence'] = parsed_response['evidence']
+                fixed_risks.append(risk)
+
+    return fixed_risks
+
+async def compare_risks(new_risks: List[Dict], previous_risks: List[Dict]):
+    """
+    比较每个新识别的风险与之前的所有风险，判断是否有重复。
+    """
+    risk_comparison = []
+    for new_risk in new_risks:
+        prompt = f"""比较以下新识别的风险与之前的所有风险，判断新风险是否与任何之前的风险相同或非常相似：
+
+新识别的风险：
+{json.dumps(new_risk, indent=2)}
+
+之前识别的风险：
+{json.dumps(previous_risks, indent=2)}
+
+指示:
+1. 判断这个新风险是否与任何之前的风险相同或非常相似。
+2. 如果发现相同或非常相似的风险，请解释原因。
+
+请将你的回答格式化为一个JSON对象,并用markdown代码块包装:
+```json
+{{
+    "new_risk": "新风险的描述",
+    "is_duplicate": true/false,
+    "similar_to": "相似的旧风险描述（如果存在）",
+    "explanation": "解释为什么这个风险被认为是相同或不同的"
+}}
+```
+"""
+
+        messages = [{"role": "user", "content": prompt}]
+        response = await call_llm(messages)
+        parsed_response = parse_json(response)
+        
+        if parsed_response and not parsed_response.get("is_duplicate", False):
+            risk_comparison.append(new_risk)
+        else:
+            logger.info(f"判断为重复风险问题：{risk['description']}")
+
+    return risk_comparison
 
 async def analyze_comment_context(comment_context: Dict[str, Any]) -> str:
     """ 
