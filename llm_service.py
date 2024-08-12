@@ -196,7 +196,7 @@ async def compare_risks(new_risks: List[Dict], previous_risks: List[Dict]):
         if parsed_response and not parsed_response.get("is_duplicate", False):
             risk_comparison.append(new_risk)
         else:
-            logger.info(f"判断为重复风险问题：{risk['description']}")
+            logger.info(f"判断为重复风险问题：{new_risk['description']}")
 
     return risk_comparison
 
