@@ -161,23 +161,33 @@ class MRProcessor:
             logger.debug("Full error details:", exc_info=True)
         return None
 
-    @staticmethod
-    def add_comment_to_mr(mr, comment):
-        logger.debug("Adding comment to GitLab MR %s", mr.iid)
+    async def add_comment_to_mr(self, mr, comment):
         try:
-            mr.notes.create({'body': comment})
+            # 使用 GitLab API 添加评论
+            note = mr.notes.create({'body': comment})
+            logger.info(f"Comment added to GitLab MR. MR IID: {mr.iid}")
+            return note
         except Exception as e:
-            logger.error("Failed to add comment to GitLab MR: %s", str(e))
-            raise
+            logger.error(f"Error adding comment to GitLab MR: {str(e)}")
+            raise  # 重新抛出异常，而不是返回 None
 
-    @staticmethod
-    def add_comment_to_pr(pr, comment):
-        logger.debug("Adding comment to GitHub PR %s", pr.number)
+
+    async def add_comment_to_pr(self, pr, comment):
+        """
+        在 GitHub 拉取请求中添加评论。
+
+        :param pr: GitHub 拉取请求对象
+        :param comment: 要添加的评论内容
+        :return: 添加的评论对象
+        """
         try:
-            pr.create_issue_comment(comment)
+            # 使用 GitHub API 添加评论
+            new_comment = pr.create_issue_comment(comment)
+            logger.info(f"Comment added to GitHub PR. PR Number: {pr.number}")
+            return new_comment
         except Exception as e:
-            logger.error("Failed to add comment to GitHub PR: %s", str(e))
-            raise
+            logger.error(f"Error adding comment to GitHub PR: {str(e)}")
+            raise  # 重新抛出异常，而不是返回 None
 
     async def process_merge_request(self, body: Dict[str, Any], headers: Dict[str, str], platform: str, add_comments=True):
         logger.debug("Processing %s with action: %s", "MR" if platform == "gitlab" else "PR", body.get("object_attributes", {}).get("action") or body.get("action"))
