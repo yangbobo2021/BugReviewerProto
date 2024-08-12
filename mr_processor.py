@@ -316,6 +316,9 @@ class MRProcessor:
                 elif platform == "github":
                     MRProcessor.add_comment_to_pr(item, comment)
 
+# mr_processor.py
+
+# ... [之前的代码保持不变] ...
 
     @staticmethod
     async def analyze_mr_cli(base_url, token, project_id, mr_iid, platform):
@@ -341,4 +344,46 @@ class MRProcessor:
         except Exception as e:
             logger.error("An unexpected error occurred: %s", str(e))
             logger.debug("Full error details:", exc_info=True)
+            return {"risks": []}  # 返回一个空的风险列表，而不是 None
+
+    @staticmethod
+    def get_comment_context(body: Dict[str, Any], platform: str) -> Dict[str, Any]:
+        """
+        Retrieve the context for the comment, including MR/PR details and previous comments.
+        This method is added to support comment processing functionality.
+        """
+        if platform == "gitlab":
+            project_id = body['project']['id']
+            mr_iid = body['merge_request']['iid']
+            gitlab_url = body['project']['web_url'].rsplit('/', 2)[0]
+            gitlab_token = body['project']['ci_config_path']  # 假设token存储在这个字段，实际使用时可能需要调整
+            
+            gl = MRProcessor.get_gitlab_client(gitlab_url, gitlab_token)
+            project, mr = MRProcessor.get_mr_details(gl, project_id, mr_iid)
+            changed_files = MRProcessor.get_changed_files_gitlab(project, mr)
+            
+            # Fetch previous comments
+            comments = mr.notes.list()
+            
+        elif platform == "github":
+            repo_name = body['repository']['full_name']
+            pr_number = body['issue']['number']
+            github_token = body['installation']['id']  # 假设token存储在这个字段，实际使用时可能需要调整
+            
+            gh = MRProcessor.get_github_client(github_token)
+            repo, pr = MRProcessor.get_pr_details(gh, repo_name, pr_number)
+            changed_files = MRProcessor.get_changed_files_github(pr)
+            
+            # Fetch previous comments
+            comments = pr.get_issue_comments()
+        else:
+            raise ValueError(f"Unsupported platform: {platform}")
+        
+        return {
+            "platform": platform,
+            "changed_files": changed_files,
+            "comments": comments,
+            "current_comment": body.get('object_attributes', {}).get('note') if platform == "gitlab" else body.get('comment', {}).get('body')
+        }
+
             

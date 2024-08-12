@@ -4,6 +4,7 @@ import os
 import json
 import logging
 import openai
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +69,7 @@ async def analyze_code_security(all_file_contents: str):
     Analyze code security by sending a diff and optionally full code to the LLM.
 
     Args:
-        diff (str): The code diff to analyze.
-        full_code (str, optional): The full updated file content.
+        all_file_contents (str): The code diff and full updated file content to analyze.
 
     Returns:
         dict: Parsed JSON response containing security analysis results.
@@ -131,3 +131,63 @@ async def analyze_code_security(all_file_contents: str):
     if parsed_response is None:
         return {"risks": []}  # 返回一个空的风险列表而不是 None
     return parsed_response
+
+async def analyze_comment_context(comment_context: Dict[str, Any]) -> str:
+    """ 
+    Analyze the comment context and generate a smart reply.
+
+    Args:
+    comment_context (Dict[str, Any]): The context of the comment, including changed files and previous comments.
+
+    Returns:
+        str: The generated smart reply.
+    """
+    platform = comment_context['platform']
+    changed_files = comment_context['changed_files']
+    comments = comment_context['comments']
+    current_comment = comment_context['current_comment']
+
+    # Prepare the context for the LLM
+    context = f"Platform: {platform}\n\n"
+    context += "Changed files:\n"
+    for file in changed_files:
+        context += f"File: {file['new_path'] or file['old_path']}\n"
+        context += f"Diff:\n{file['diff']}\n"
+        if not file.get('new_file') and not file.get('deleted_file') and file.get('new_content'):
+            context += f"Full updated content:\n{file['new_content']}\n"
+        context += "---\n"
+
+    context += "Relevant comments in the thread:\n"
+    for comment in comments:
+        if platform == "gitlab":
+            author = comment.get('author', {}).get('name') or comment.get('author', {}).get('username') or "Unknown"
+            body = comment.get('body') or comment.get('note', '')
+        elif platform == "github":
+            author = comment.user.login if hasattr(comment, 'user') else "Unknown"
+            body = comment.body if hasattr(comment, 'body') else ''
+        else:
+            author = "Unknown"
+            body = str(comment)
+
+        context += f"- {author}: {body}\n"
+
+    context += f"\nCurrent comment: {current_comment}\n"
+
+    prompt = f"""作为一个代码审查助手，你需要根据以下上下文生成一个智能回复：
+{context}
+
+请遵循以下指南：
+1. 分析变更的代码和之前的评论。
+2. 理解当前评论的内容和意图。
+3. 提供一个有见地、有帮助的回复，可能包括：
+    * 对代码变更的技术见解
+    * 对之前评论的回应
+    * 对当前评论提出的问题的解答
+    * 如果适用，提供改进代码的建议
+4. 保持专业和友好的语气。
+5. 如果需要更多信息来做出准确的回应，可以礼貌地请求。
+
+请直接给出回复内容，不需要任何额外的格式或前缀。"""
+    messages = [{"role": "user", "content": prompt}]
+    response = await call_llm(messages)
+    return response

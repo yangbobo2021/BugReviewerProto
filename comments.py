@@ -1,6 +1,12 @@
-import requests
+# comments.py
+
+import logging
 from typing import List, Dict, Optional
 from datetime import datetime
+import aiohttp
+from aiohttp import ClientSession
+
+logger = logging.getLogger(__name__)
 
 class Comment:
     def __init__(self, id: str, content: str, author: str, created_at: datetime, parent_id: Optional[str] = None):
@@ -28,117 +34,141 @@ class Comment:
         }
 
 class CommentManager:
-    def __init__(self, platform: str, api_url: str, token: str):
+    def __init__(self, platform: Optional[str] = None, api_url: Optional[str] = None, token: Optional[str] = None):
         self.platform = platform
         self.api_url = api_url
+        if self.api_url and not self.api_url.endswith('/api/v4'):
+            self.api_url = f"{self.api_url.rstrip('/')}/api/v4"
         self.token = token
-        self.comments: Dict[str, Comment] = {}
-        self.trigger_comment: Optional[Comment] = None
+        self.session: Optional[ClientSession] = None
 
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict:
-        headers = {"Authorization": f"Bearer {self.token}"}
-        url = f"{self.api_url}/{endpoint}"
-        response = requests.request(method, url, headers=headers, json=data)
-        response.raise_for_status()
-        return response.json()
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
 
-    def fetch_comments(self, mr_id: str):
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+
+    async def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict:
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+        url = f"{self.api_url}/{endpoint.lstrip('/')}"
+        logger.info(f"Making {method} request to {url}")
+        logger.debug(f"Request data: {data}")
+
+        try:
+            async with self.session.request(method, url, headers=headers, json=data) as response:
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as e:
+            logger.error(f"Request failed: {e.status}, message='{str(e)}', url='{url}'")
+            raise
+
+    async def fetch_comments(self, project_id: str, mr_iid: str) -> List[Comment]:
         if self.platform == "gitlab":
-            endpoint = f"projects/{mr_id}/merge_requests/{mr_id}/notes"
+            endpoint = f"projects/{project_id}/merge_requests/{mr_iid}/discussions"
         else:  # github
-            endpoint = f"repos/{mr_id}/pulls/{mr_id}/comments"
+            endpoint = f"repos/{project_id}/pulls/{mr_iid}/comments"
         
-        comments_data = self._make_request("GET", endpoint)
-        self._process_comments(comments_data)
+        discussions_data = await self._make_request("GET", endpoint)
+        return self._process_comments(discussions_data)
 
-    def _process_comments(self, comments_data: List[Dict]):
-        for comment_data in comments_data:
-            comment = Comment(
-                id=comment_data["id"],
-                content=comment_data["body"],
-                author=comment_data["user"]["username"],
-                created_at=datetime.fromisoformat(comment_data["created_at"]),
-                parent_id=comment_data.get("in_reply_to_id")
+    def _process_comments(self, discussions_data: List[Dict]) -> List[Comment]:
+        comments = []
+        for discussion in discussions_data:
+            notes = discussion.get('notes', [])
+            for i, note_data in enumerate(notes):
+                author = note_data.get("author", {}).get("username") or note_data.get("username")
+                comment = Comment(
+                    id=str(note_data["id"]),
+                    content=note_data["body"],
+                    author=author,
+                    created_at=datetime.fromisoformat(note_data["created_at"].replace("Z", "+00:00")),
+                    parent_id=str(notes[0]["id"]) if i > 0 else None
+                )
+                comments.append(comment)
+
+                # If this is not the first note in the discussion, it's a reply
+                if i > 0:
+                    parent = next((c for c in comments if c.id == str(notes[0]["id"])), None)
+                    if parent:
+                        parent.replies.append(comment)
+
+        return comments
+
+    async def reply_to_comment(self, project_id: str, mr_id: str, discussion_id: Optional[str], comment_id: str, content: str) -> Comment:
+        try:
+            if self.platform == "gitlab":
+                endpoint = f"projects/{project_id}/merge_requests/{mr_id}/discussions/{discussion_id}/notes"
+                data = {"body": content, "in_reply_to_id": comment_id}
+            else:  # github
+                endpoint = f"repos/{project_id}/pulls/{mr_id}/comments"
+                data = {"body": content, "in_reply_to": comment_id}
+            
+            response = await self._make_request("POST", endpoint, data)
+            
+            new_comment = Comment(
+                id=str(response["id"]),
+                content=response["body"],
+                author=response["author"]["username"] if "author" in response else response["user"]["login"],
+                created_at=datetime.fromisoformat(response["created_at"].replace("Z", "+00:00")),
+                parent_id=comment_id
             )
-            self.comments[comment.id] = comment
+            return new_comment
+        except Exception as e:
+            logger.error(f"Failed to reply to comment: {str(e)}")
+            raise
 
-        # Build reply structure
-        for comment in self.comments.values():
-            if comment.parent_id:
-                parent = self.comments.get(comment.parent_id)
-                if parent:
-                    parent.replies.append(comment)
-
-    def get_root_comments(self) -> List[Comment]:
-        return [comment for comment in self.comments.values() if not comment.parent_id]
-
-    def get_parent_comment(self, comment_id: str) -> Optional[Comment]:
-        comment = self.comments.get(comment_id)
-        if comment and comment.parent_id:
-            return self.comments.get(comment.parent_id)
-        return None
-
-    def get_reply_comments(self, comment_id: str) -> List[Comment]:
-        comment = self.comments.get(comment_id)
-        return comment.replies if comment else []
-
-    def reply_to_comment(self, parent_id: str, content: str) -> Comment:
+    async def add_root_comment(self, project_id: str, mr_id: str, content: str) -> Comment:
         if self.platform == "gitlab":
-            endpoint = f"projects/{parent_id}/merge_requests/{parent_id}/notes"
+            endpoint = f"projects/{project_id}/merge_requests/{mr_id}/notes"
         else:  # github
-            endpoint = f"repos/{parent_id}/pulls/{parent_id}/comments"
-        
-        data = {"body": content, "in_reply_to": parent_id}
-        response = self._make_request("POST", endpoint, data)
-        
-        new_comment = Comment(
-            id=response["id"],
-            content=response["body"],
-            author=response["user"]["username"],
-            created_at=datetime.fromisoformat(response["created_at"]),
-            parent_id=parent_id
-        )
-        self.comments[new_comment.id] = new_comment
-        parent = self.comments.get(parent_id)
-        if parent:
-            parent.replies.append(new_comment)
-        return new_comment
-
-    def add_root_comment(self, mr_id: str, content: str) -> Comment:
-        if self.platform == "gitlab":
-            endpoint = f"projects/{mr_id}/merge_requests/{mr_id}/notes"
-        else:  # github
-            endpoint = f"repos/{mr_id}/pulls/{mr_id}/comments"
+            endpoint = f"repos/{project_id}/pulls/{mr_id}/comments"
         
         data = {"body": content}
-        response = self._make_request("POST", endpoint, data)
+        response = await self._make_request("POST", endpoint, data)
         
         new_comment = Comment(
-            id=response["id"],
+            id=str(response["id"]),
             content=response["body"],
-            author=response["user"]["username"],
-            created_at=datetime.fromisoformat(response["created_at"])
+            author=response["user"]["username"] if "user" in response else response["author"]["username"],
+            created_at=datetime.fromisoformat(response["created_at"].replace("Z", "+00:00"))
         )
-        self.comments[new_comment.id] = new_comment
         return new_comment
 
-    def resolve_thread(self, comment_id: str, resolver: str):
-        comment = self.comments.get(comment_id)
+    async def resolve_thread(self, project_id: str, mr_id: str, comment_id: str, resolver: str):
+        comment = await self.fetch_comment(project_id, mr_id, comment_id)
         if comment:
             comment.resolved = True
             comment.resolved_by = resolver
             comment.resolved_at = datetime.now()
             
             if self.platform == "gitlab":
-                endpoint = f"projects/{comment_id}/merge_requests/{comment_id}/notes/{comment_id}/resolve"
+                endpoint = f"projects/{project_id}/merge_requests/{mr_id}/discussions/{comment.parent_id or comment_id}/notes/{comment_id}/resolve"
             else:  # github
                 # GitHub doesn't have a direct "resolve" API, you might need to add a custom label or update the comment
-                endpoint = f"repos/{comment_id}/pulls/{comment_id}/comments/{comment_id}"
+                endpoint = f"repos/{project_id}/pulls/{mr_id}/comments/{comment_id}"
             
-            self._make_request("PUT", endpoint, {"resolved": True})
+            await self._make_request("PUT", endpoint, {"resolved": True})
 
-    def set_trigger_comment(self, comment_id: str):
-        self.trigger_comment = self.comments.get(comment_id)
-
-    def get_trigger_comment(self) -> Optional[Comment]:
-        return self.trigger_comment
+    async def fetch_comment(self, project_id: str, mr_id: str, comment_id: str) -> Optional[Comment]:
+        if self.platform == "gitlab":
+            endpoint = f"projects/{project_id}/merge_requests/{mr_id}/notes/{comment_id}"
+        else:  # github
+            endpoint = f"repos/{project_id}/pulls/{mr_id}/comments/{comment_id}"
+        
+        response = await self._make_request("GET", endpoint)
+        
+        return Comment(
+            id=str(response["id"]),
+            content=response["body"],
+            author=response["user"]["username"] if "user" in response else response["author"]["username"],
+            created_at=datetime.fromisoformat(response["created_at"].replace("Z", "+00:00")),
+            parent_id=response.get("in_reply_to_id")
+        )
