@@ -31,7 +31,7 @@ class CommentProcessor(MRProcessor):
             
             self.comment_manager = CommentManager("github", "https://api.github.com", github_token)
         
-        if self.should_reply(body, platform):
+        if self.should_reply(body, headers, platform):
             try:
                 comment_context = await self.get_comment_context(body, headers, platform)
                 reply = await self.generate_smart_reply(comment_context)
@@ -42,17 +42,24 @@ class CommentProcessor(MRProcessor):
         else:
             logger.info("No reply needed for this comment")
 
-    def should_reply(self, body: Dict[str, Any], platform: str) -> bool:
+    def should_reply(self, body: Dict[str, Any], headers: Dict[str, str], platform: str) -> bool:
         """
         Determine if the bot should reply to this comment.
         """
+        bot_name = headers.get('bot-name', '').lower()
+        if not bot_name:
+            logger.warning("Bot name not found in headers")
+            return False
+
         if platform == "gitlab":
             comment_content = body.get('object_attributes', {}).get('note', '').lower()
-            return "@bobo.yang" in comment_content
         elif platform == "github":
             comment_content = body.get('comment', {}).get('body', '').lower()
-            return "@bobo.yang" in comment_content
-        return False
+        else:
+            logger.warning(f"Unsupported platform: {platform}")
+            return False
+
+        return f"@{bot_name}" in comment_content
 
     async def get_comment_context(self, body: Dict[str, Any], headers: Dict[str, str], platform: str) -> Dict[str, Any]:
         """
