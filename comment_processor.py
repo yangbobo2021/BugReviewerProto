@@ -50,6 +50,7 @@ class CommentProcessor(MRProcessor):
         if not bot_name:
             logger.warning("Bot name not found in headers")
             return False
+        logger.info(f"Bot name is: {bot_name}")
 
         if platform == "gitlab":
             comment_content = body.get('object_attributes', {}).get('note', '').lower()
