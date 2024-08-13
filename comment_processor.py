@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any
 from mr_processor import MRProcessor
 from comments import CommentManager
-from llm_service import analyze_comment_context
+from llm_service import analyze_comment_context, should_update_knowledge_base, update_knowledge_base
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +34,37 @@ class CommentProcessor(MRProcessor):
         if self.should_reply(body, headers, platform):
             try:
                 comment_context = await self.get_comment_context(body, headers, platform)
-                reply = await self.generate_smart_reply(comment_context)
-                await self.send_reply(reply, body, headers, platform)
+
+                project_id = self.get_project_id(body, platform)
+                # current_comment = comment_context['current_comment']
+
+                # 使用 AI 判断是否需要更新知识库
+                update_knowledege = ""
+                if await should_update_knowledge_base(project_id, comment_context):
+                    update_knowledege = await self.update_ai_knowledge(project_id, comment_context)
+                
+                reply = await self.generate_smart_reply(project_id, comment_context)
+                await self.send_reply(update_knowledege + "\n\n" + reply, body, headers, platform)
                 logger.info("Comment processed and reply sent successfully")
             except Exception as e:
                 logger.error(f"Error processing comment: {str(e)}")
         else:
             logger.info("No reply needed for this comment")
+
+    def get_project_id(self, body, platform):
+        if platform == "gitlab":
+            return body['project']['id']
+        elif platform == "github":
+            return body['repository']['full_name']
+        else:
+            raise ValueError(f"Unsupported platform: {platform}")
+
+
+    async def update_ai_knowledge(self, project_id: str, comment: str):
+        response = await update_knowledge_base(project_id, comment)
+        logger.info(f"AI knowledge base updated for project {project_id}: {response}")
+        return response
+
 
     def should_reply(self, body: Dict[str, Any], headers: Dict[str, str], platform: str) -> bool:
         """
@@ -107,12 +131,12 @@ class CommentProcessor(MRProcessor):
             "current_comment": body.get('object_attributes', {}).get('note') if platform == "gitlab" else body.get('comment', {}).get('body')
         }
 
-    async def generate_smart_reply(self, comment_context: Dict[str, Any]) -> str:
+    async def generate_smart_reply(self, project_id, comment_context: Dict[str, Any]) -> str:
         """
         Generate a smart reply based on the comment context using LLM.
         """
         try:
-            reply = await analyze_comment_context(comment_context)
+            reply = await analyze_comment_context(project_id, comment_context)
             return reply
         except Exception as e:
             logger.error(f"Error generating smart reply: {str(e)}")

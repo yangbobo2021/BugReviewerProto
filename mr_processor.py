@@ -9,6 +9,8 @@ import gitlab
 import github
 from llm_service import check_fixed_risks, compare_risks, identify_new_risks
 
+from gitlab.exceptions import GitlabGetError
+
 # 设置日志级别
 log_level = logging.DEBUG if os.environ.get('DEBUG', 'false').lower() == 'true' else logging.INFO
 logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -252,18 +254,30 @@ class MRProcessor:
             logger.warning(f"Content exceeds 64K tokens (estimated {estimated_tokens} tokens). Skipping LLM analysis.")
             return
 
+        # 获取项目 ID
+        project_id = self.get_project_id(mr_or_pr, platform)
+
         # 获取之前的风险分析结果
         previous_risks = await self.get_previous_risks(mr_or_pr)
 
         # 步骤1：识别新的风险
-        new_risks = await identify_new_risks(all_file_contents)
-
-        # 步骤2：检查之前的风险是否被修复
-        previous_unfixed_risks = [risk for risk in previous_risks if risk.get("status", "") != "fix"]
-        fixed_risks = await check_fixed_risks(all_file_contents, previous_unfixed_risks)
+        new_risks = await identify_new_risks(project_id, all_file_contents)
 
         # 步骤3：比较新风险与之前的风险
-        risk_comparison = await compare_risks(new_risks, previous_risks)
+        risk_comparison, risk_duplicates = await compare_risks(new_risks, previous_risks)
+
+        # 步骤2：检查之前的风险是否被修复
+        previous_unfixed_risks = []
+        for risk in previous_risks:
+            for risk_duplicate in risk_duplicates:
+                if risk.get("status", "") == "fix":
+                    continue
+                if risk_duplicate["old"].get("description", "") == risk.get("description", "") and \
+                        risk_duplicate["old"].get("location", "") == risk.get("location", "") and \
+                        risk_duplicate["old"].get("evidence", "") == risk.get("evidence", ""):
+                    continue
+                previous_unfixed_risks.append(risk)
+        fixed_risks = await check_fixed_risks(project_id, all_file_contents, previous_unfixed_risks)
 
         # 处理比较结果
         unique_new_risks = []
@@ -279,12 +293,20 @@ class MRProcessor:
         self.log_analysis_results(changed_files, unique_new_risks, fixed_risks)
 
         if add_comments:
-            await self.add_comments_to_mr(mr_or_pr, unique_new_risks, fixed_risks, platform)
+            await self.add_comments_to_mr(mr_or_pr, unique_new_risks, fixed_risks, risk_duplicates, platform)
 
         # 更新存储的风险
-        await self.save_risks(mr_or_pr, unique_new_risks, fixed_risks)
+        await self.save_risks(mr_or_pr, unique_new_risks, fixed_risks, risk_duplicates)
+    
+    def get_project_id(self, mr_or_pr, platform):
+        if platform == "gitlab":
+            return mr_or_pr.project_id
+        elif platform == "github":
+            return mr_or_pr.base.repo.full_name
+        else:
+            raise ValueError(f"Unsupported platform: {platform}")
 
-    async def add_comments_to_mr(self, item, new_risks: List[Dict], fixed_risks: List[Dict], platform: str):
+    async def add_comments_to_mr(self, item, new_risks: List[Dict], fixed_risks: List[Dict], risk_duplicates: List[Dict], platform: str):
         for risk in new_risks:
             comment = self.format_risk_comment(risk, "New Risk Identified")
             comment_id, discussion_id = await self.add_comment(item, comment, platform)
@@ -297,7 +319,86 @@ class MRProcessor:
             if 'comment_id' in risk and 'discussion_id' in risk:
                 reply = f"The following risk has been resolved:\n\n{risk['description']}\n\nEvidence: {risk['fix_evidence']}"
                 await self.add_reply(item, reply, risk['comment_id'], risk['discussion_id'], platform)
+        
+        for risk_duplicate in risk_duplicates:
+            old_risk = risk_duplicate["old"]
+            new_risk = risk_duplicate["new"]
+            if 'comment_id' in old_risk and 'discussion_id' in old_risk:
+                await self.update_comment(item, new_risk, old_risk['comment_id'], old_risk['discussion_id'], platform)
 
+    async def update_comment(self, item, new_risk, comment_id, discussion_id, platform):
+        if platform == "gitlab":
+            await self.update_comment_to_mr(item, new_risk, comment_id, discussion_id)
+        elif platform == "github":
+            await self.update_comment_to_pr(item, new_risk, comment_id)
+
+    async def update_comment_to_mr(self, mr, new_risk, comment_id, discussion_id):
+        """
+        在 GitLab 合并请求中更新特定的评论。
+        如果讨论不存在，则不进行任何操作。
+        
+        :param mr: GitLab 合并请求对象
+        :param new_risk: 新的风险信息
+        :param comment_id: 要更新的评论 ID
+        :param discussion_id: 讨论 ID
+        """
+        try:
+            # 尝试获取特定的讨论
+            try:
+                discussion = mr.discussions.get(discussion_id)
+            except GitlabGetError as e:
+                if e.response_code == 404:
+                    logger.warning(f"Discussion not found in GitLab MR. MR IID: {mr.iid}, Discussion ID: {discussion_id}. No action taken.")
+                    return None
+                else:
+                    # 如果是其他类型的错误，则重新抛出
+                    raise
+
+            # 找到要更新的评论
+            for note in discussion.attributes['notes']:
+                if note['id'] == comment_id:
+                    # 格式化新的风险评论
+                    updated_comment = self.format_risk_comment(new_risk, "Updated Risk")
+                    
+                    # 更新评论
+                    updated_note = discussion.notes.get(comment_id)
+                    updated_note.body = updated_comment
+                    updated_note.save()
+                    
+                    logger.info(f"Comment updated in GitLab MR. MR IID: {mr.iid}, Discussion ID: {discussion_id}, Comment ID: {comment_id}")
+                    return updated_note
+            
+            # 如果在讨论中找不到指定的评论，记录警告但不采取行动
+            logger.warning(f"Comment not found in GitLab MR. MR IID: {mr.iid}, Discussion ID: {discussion_id}, Comment ID: {comment_id}. No action taken.")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error updating comment in GitLab MR: {str(e)}")
+            raise
+
+    async def update_comment_to_pr(self, pr, new_risk, comment_id):
+        """
+        在 GitHub 拉取请求中更新特定的评论。
+        
+        :param pr: GitHub 拉取请求对象
+        :param new_risk: 新的风险信息
+        :param comment_id: 要更新的评论 ID
+        """
+        try:
+            # 获取原始评论
+            original_comment = pr.get_issue_comment(comment_id)
+            
+            # 格式化新的风险评论
+            updated_comment = self.format_risk_comment(new_risk, "Updated Risk")
+            
+            # 更新评论
+            original_comment.edit(updated_comment)
+            
+            logger.info(f"Comment updated in GitHub PR. PR Number: {pr.number}, Comment ID: {comment_id}")
+            return original_comment
+        except Exception as e:
+            logger.error(f"Error updating comment in GitHub PR: {str(e)}")
+            raise
 
     async def add_reply(self, item, reply, comment_id, discussion_id, platform):
         if platform == "gitlab":
@@ -360,7 +461,7 @@ class MRProcessor:
         
         return self.risks_cache.get(key, [])
 
-    async def save_risks(self, mr_or_pr, risks, fixed_risks):
+    async def save_risks(self, mr_or_pr, risks, fixed_risks, risk_duplicates):
         # 为 GitLab 和 GitHub 创建唯一的键
         if hasattr(mr_or_pr, 'project_id'):  # GitLab
             key = f"gitlab:{mr_or_pr.project_id}:{mr_or_pr.iid}"
@@ -374,6 +475,19 @@ class MRProcessor:
                     if risk['description'] == existing_risk['description']:
                         existing_risk['status'] = risk['status']
                         break
+        
+        for existing_risk in existing_risks:
+            for risk_duplicate in risk_duplicates:
+                old_risk = risk_duplicate["old"]
+                new_risk = risk_duplicate["new"]
+                if old_risk.get("description", "") == existing_risk.get("description", "") and \
+                        old_risk.get("location", "") == existing_risk.get("location", "") and \
+                        old_risk.get("evidence", "") == existing_risk.get("evidence", ""):
+                    for key in new_risk:
+                        if key in ["status", "comment_id", "discussion_id"]:
+                            continue
+                        existing_risk[key] = new_risk[key]
+                    break
 
         existing_risks += risks
         self.risks_cache[key] = existing_risks
@@ -429,7 +543,7 @@ class MRProcessor:
         return all_contents
 
     @staticmethod
-    async def analyze_files(changed_files: List[Dict]) -> Dict:
+    async def analyze_files(project_id: str, changed_files: List[Dict]) -> Dict:
         if len(changed_files) > 10:
             logger.warning(f"MR/PR involves more than 10 files ({len(changed_files)} files). Skipping analysis.")
             return {"risks": []}
@@ -443,7 +557,7 @@ class MRProcessor:
             logger.warning(f"Content exceeds 64K tokens (estimated {estimated_tokens} tokens). Skipping LLM analysis.")
             return {"risks": []}  # 返回空的风险列表
         
-        return await identify_new_risks(all_file_contents)
+        return await identify_new_risks(project_id, all_file_contents)
 
     @staticmethod
     def log_analysis_results(changed_files: List[Dict], new_risks: List[Dict], fixed_risks: List[Dict]):
@@ -495,7 +609,7 @@ class MRProcessor:
             else:
                 raise ValueError(f"Unsupported platform: {platform}")
 
-            security_analysis = await MRProcessor.analyze_files(changed_files)
+            security_analysis = await MRProcessor.analyze_files(project_id, changed_files)
 
             MRProcessor.log_analysis_results(changed_files, security_analysis, [])
             
