@@ -269,13 +269,17 @@ class MRProcessor:
         # 步骤2：检查之前的风险是否被修复
         previous_unfixed_risks = []
         for risk in previous_risks:
+            fix_or_duplicate = False
             for risk_duplicate in risk_duplicates:
                 if risk.get("status", "") == "fix":
-                    continue
+                    fix_or_duplicate = True
+                    break
                 if risk_duplicate["old"].get("description", "") == risk.get("description", "") and \
                         risk_duplicate["old"].get("location", "") == risk.get("location", "") and \
                         risk_duplicate["old"].get("evidence", "") == risk.get("evidence", ""):
-                    continue
+                    fix_or_duplicate = True
+                    break
+            if not fix_or_duplicate:
                 previous_unfixed_risks.append(risk)
         fixed_risks = await check_fixed_risks(project_id, all_file_contents, previous_unfixed_risks)
 
