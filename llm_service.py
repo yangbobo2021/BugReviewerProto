@@ -156,7 +156,7 @@ async def check_fixed_risks(project_id: str, all_file_contents: str, previous_ri
 
     for risk in previous_risks:
         if risk['status'] == 'open':  # 只检查未修复的风险
-            prompt = f"""分析以下代码变更，并严格评估以下特定风险是否已被修复：
+            prompt = f"""分析以下代码变更，并评估以下特定风险是否已按照原始建议被修复：
 
 当前代码变更：
 {all_file_contents}
@@ -168,10 +168,10 @@ async def check_fixed_risks(project_id: str, all_file_contents: str, previous_ri
 {json.dumps(risk, indent=2)}
 
 重要指示：
-1. 严格聚焦于原始风险描述中提到的具体问题。不要考虑或引入新的潜在风险。
-2. 从工程师的认知角度评估问题是否确实得到了修复。
-3. 只关注原始风险的核心问题是否被解决，而不是寻找可能的新问题或改进空间。
-4. 如果原始风险的核心问题已经不存在，即使代码中可能存在其他潜在问题，也应认为该风险已修复。
+1. 严格聚焦于原始风险描述中提到的具体问题和建议的解决方案。
+2. 检查代码是否已按照原始建议进行了修改。如果是，则应认为风险已修复。
+3. 不要引入新的问题或考虑原始风险描述之外的潜在问题。
+4. 如果代码修改基本符合建议的意图，即使实现细节可能略有不同，也应认为风险已修复。
 5. 提供具体的代码证据来支持你的结论，引用相关的代码更改。
 6. 知识库中的信息优先级高于一般的代码分析规则。
 
@@ -179,7 +179,7 @@ async def check_fixed_risks(project_id: str, all_file_contents: str, previous_ri
 ```json
 {{
     "is_fixed": true/false,
-    "evidence": "详细解释为什么这个特定风险被认为已修复或仍然存在，包括相关代码更改的引用"
+    "evidence": "详细解释为什么这个特定风险被认为已修复或仍然存在，包括相关代码更改的引用，并说明修改是否符合原始建议"
 }}
 ```
 """
