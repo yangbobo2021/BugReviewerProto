@@ -178,14 +178,14 @@ async def check_fixed_risks(project_id: str, all_file_contents: str, previous_ri
 指示:
 1. 仅根据修改后的代码评估原始风险是否已被修复。
 2. 提供具体的代码证据来支持你的结论。
-3. 如果风险未完全修复，请仅针对原始问题提供改进建议。
+3. 风险是否修正，需要严格聚焦在风险问题本身，不应该泛化风险。
+4. 判断风险是否已经修复，不应看是否还有更好的修复方法，应该聚焦问题本身是否得到修复。
 
 请将你的回答格式化为一个JSON对象,并用markdown代码块包装:
 ```json
 {{
     "is_fixed": true/false,
-    "evidence": "解释为什么这个风险被认为已修复或仍然存在",
-    "additional_improvements": "如果风险未完全修复，列出需要的额外改进"
+    "evidence": "解释为什么这个风险被认为已修复或仍然存在"
 }}
 ```
 """
