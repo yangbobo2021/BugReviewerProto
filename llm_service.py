@@ -225,8 +225,8 @@ async def compare_risks(new_risks: List[Dict], previous_risks: List[Dict]):
 {json.dumps(previous_risks, indent=2)}
 
 指示:
-1. 仅判断这个新风险是否与任何之前的风险实质上相同。
-2. 关注风险的核心问题，而不是表述方式。
+1. 仅判断这个新风险是否与任何之前的风险触发的源码语句信息是完全一致的。
+2. 关注风险的核心问题，但也关注问题的表述，确保工程师在两个表述上认为是同一个问题。
 3. 如果发现相同的风险，请提供具体的相似之处。
 4. 不要将泛化的原则或新引入的问题视为重复。
 5. 如果发现相似的风险，请在 similar_to 字段中包含完整的 id_description。
