@@ -49,7 +49,51 @@ class CommentProcessor(MRProcessor):
             except Exception as e:
                 logger.error(f"Error processing comment: {str(e)}")
         else:
-            logger.info("No reply needed for this comment")
+            # Check if the comment contains a trigger keyword for MR analysis
+            if self.should_trigger_analysis(body, platform):
+                await self.delete_comment(body, headers, platform)  # Delete the command comment
+                await self.trigger_analysis(body, headers, platform)
+            else:
+                logger.info("No reply needed for this comment")
+
+
+    def should_trigger_analysis(self, body: Dict[str, Any], platform: str) -> bool:
+        trigger_keyword = "/start_analysis"
+        if platform == "gitlab":
+            comment_content = body.get('object_attributes', {}).get('note', '').lower()
+        elif platform == "github":
+            comment_content = body.get('comment', {}).get('body', '').lower()
+        else:
+            return False
+        return trigger_keyword in comment_content
+
+    async def delete_comment(self, body: Dict[str, Any], headers: Dict[str, str], platform: str):
+        if platform == "gitlab":
+            project_id = body['project']['id']
+            comment_id = body['object_attributes']['id']
+            gitlab_url = body['project']['web_url'].rsplit('/', 2)[0]
+            gitlab_token = headers['x-gitlab-token']
+            gl = self.get_gitlab_client(gitlab_url, gitlab_token)
+            project = gl.projects.get(project_id)
+            note = project.notes.get(comment_id)
+            note.delete()
+            logger.info(f"Deleted comment {comment_id} in GitLab project {project_id}")
+        elif platform == "github":
+            repo_name = body['repository']['full_name']
+            comment_id = body['comment']['id']
+            github_token = headers.get('x-github-token')
+            gh = self.get_github_client(github_token)
+            repo = gh.get_repo(repo_name)
+            comment = repo.get_comment(comment_id)  # 修改这里
+            comment.delete()
+            logger.info(f"Deleted comment {comment_id} in GitHub repository {repo_name}")
+
+    async def trigger_analysis(self, body: Dict[str, Any], headers: Dict[str, str], platform: str):
+        if platform == "gitlab":
+            await self.process_gitlab_mr(body, headers, add_comments=True)
+        elif platform == "github":
+            await self.process_github_pr(body, headers, add_comments=True)
+
 
     def get_project_id(self, body, platform):
         if platform == "gitlab":
